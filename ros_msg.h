@@ -17,7 +17,7 @@
 class ros_msg
 {
 public:
-    explicit ros_msg(localization &lo,float resolution);
+    explicit ros_msg(cartographer_interface &lo,float resolution);
 
     std::unique_ptr<nav_msgs::OccupancyGrid>  DrawAndPublish();
     visualization_msgs::MarkerArray GetTrajectoryNodeList();
@@ -50,7 +50,7 @@ private:
     int m_num_subdivisions_per_laser_scan = 10;
     std::unique_ptr<cartographer::mapping::MapBuilderInterface>& m_map_builder;
     std::map<std::string, cartographer::common::Time> m_sensor_to_previous_subdivision_time;
-    localization &m_localization;
+    cartographer_interface &m_localization;
 };
 
 

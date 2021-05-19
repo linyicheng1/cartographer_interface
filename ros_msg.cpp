@@ -8,7 +8,7 @@ void PushAndResetLineMarker(visualization_msgs::Marker* marker,
                             std::vector<visualization_msgs::Marker>* markers);
 geometry_msgs::Point ToGeometryMsgPoint(const Eigen::Vector3d& vector3d);
 
-ros_msg::ros_msg(localization &lo,float resolution):
+ros_msg::ros_msg(cartographer_interface &lo,float resolution):
     m_resolution(resolution),m_map_builder(lo.get_map_builder()),m_localization(lo)
 {
 }

@@ -11,7 +11,7 @@ int main(int argc, char** argv)
     google::InitGoogleLogging(argv[0]);
     google::ParseCommandLineFlags(&argc, &argv, true);
 
-    localization localize("/home/lyc/Downloads/b2-2016-04-05-14-44-52.bag.pbstream",
+    cartographer_interface localize("/home/lyc/Downloads/b2-2016-04-05-14-44-52.bag.pbstream",
                           0.05,
                           "/home/lyc/cartographer_ws/src/cartographer_ros/cartographer_ros/configuration_files",
                           "backpack_2d.lua");
@@ -40,7 +40,7 @@ int main(int argc, char** argv)
     ros::Subscriber m_imu_subscriber = node_handle.subscribe("imu",1000,&ros_msg::imu_callback,&msg);
     //ros::Subscriber m_odometry_subscriber = node_handle.subscribe("odom",1000,&ros_msg::odometry_callback,&msg);
     ros::Rate loop_rate(100);
-    ScopedLogSink ros_log_sink;
+    //ScopedLogSink ros_log_sink;
     while(ros::ok())
     {
         // publish map

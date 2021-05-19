@@ -13,25 +13,38 @@ std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
         const std::string& configuration_directory,
         const std::string& configuration_basename);
 
-localization::localization(const std::string& map_path,
+
+/**
+ * @brief  构造函数，设置传感器数据，并添加一条轨迹，加载当前地图 
+ * @param map_path                                 需要加载的地图路径
+ * @param resolution                                  地图分辨率
+ * @param configuration_directory      配置参数目录
+ * @param configuration_basename   配置参数文件 
+ */
+cartographer_interface::cartographer_interface(const std::string& map_path,
                            float resolution,
                            const std::string& configuration_directory,
                            const std::string& configuration_basename):
 m_map_path_str(std::move(map_path)),m_resolution(resolution)
 {
-
+    // 从配置文件中加载配置参数
     std::tie(m_node_options, m_trajectory_options) = LoadOptions(configuration_directory,configuration_basename);
-    // map builder
+    // 调用 cartographer 接口，构造 MapBuilder 类
     m_map_builder = cartographer::common::make_unique<cartographer::mapping::MapBuilder>(m_node_options.map_builder_options);
-    // load state
-
+    // @TODO 加载现有的地图数据 
+    
     //@TODO need to change when change the sensors
-    // using one 2d laser + IMU + odometry in my project
+    // 目前在本项目中使用一个2d雷达 + IMU + 轮速计
     using SensorId = cartographer::mapping::TrajectoryBuilderInterface::SensorId;
     using SensorType = SensorId::SensorType;
     m_sensor_ids.insert(SensorId{SensorType::RANGE, "echoes"});// laser 2d
     m_sensor_ids.insert(SensorId{SensorType::IMU, "imu"});// IMU
     //m_sensor_ids.insert(SensorId{SensorType::ODOMETRY, "odometry"});// odometry
+
+    // 调用接口构造一条轨迹，返回轨迹id
+    // m_sensor_ids   传感器类型及id
+    // trajectory_builder_options 轨迹的配置参数
+    // 最后一个参数为lambda表达式，为定位结果回调调用函数
     m_trajectory_id = m_map_builder->AddTrajectoryBuilder(m_sensor_ids, m_trajectory_options.trajectory_builder_options,
                                                           [this](const int id,
                                                                  const cartographer::common::Time time,
@@ -41,21 +54,21 @@ m_map_path_str(std::move(map_path)),m_resolution(resolution)
                                                               OnLocalSlamResult2(id, time, local_pose,
                                                                                  range_data_in_local);
                                                           });
-
+    // 
     AddExtrapolator(m_trajectory_id, m_trajectory_options);
     AddSensorSamplers(m_trajectory_id, m_trajectory_options);
     // get trajectory pointer by id
     m_trajectory_builder = m_map_builder->GetTrajectoryBuilder(m_trajectory_id);
 }
 
-void localization::OnLocalSlamResult2(
+void cartographer_interface::OnLocalSlamResult2(
             const int id, const cartographer::common::Time time,
             const cartographer::transform::Rigid3d local_pose,
             cartographer::sensor::RangeData range_data_in_local)
 {
     cartographer::transform::Rigid3d local2global = m_map_builder->pose_graph()->GetLocalToGlobalTransform(m_trajectory_id);
     cartographer::transform::Rigid3d pose3d = local2global * local_pose;
-    //std::cout<<"pose:"<<pose3d.translation().x()<<std::endl;
+    std::cout<<"pose:"<<pose3d.translation().x()<<std::endl;
     //cartographer::Position pose2d = from_carto_rigid3d(from_carto_time(time), pose3d);
         //callback(pose2d);
 
@@ -63,12 +76,12 @@ void localization::OnLocalSlamResult2(
         return;
 };
 
-localization::~localization()
+cartographer_interface::~cartographer_interface()
 {
     delete m_painted_slices;
 }
 
-cartographer::transform::Rigid3d localization::tracking_to_map(cartographer::common::Time now)
+cartographer::transform::Rigid3d cartographer_interface::tracking_to_map(cartographer::common::Time now)
 {
 
 //    if (m_local_slam_data->time !=
@@ -86,7 +99,7 @@ cartographer::transform::Rigid3d localization::tracking_to_map(cartographer::com
  * @param map_path
  * @return
  */
-bool localization::read_map(const std::string& map_path)
+bool cartographer_interface::read_map(const std::string& map_path)
 {
     const std::string suffix = ".pbstream";
     CHECK_EQ(map_path.substr(
@@ -106,7 +119,7 @@ bool localization::read_map(const std::string& map_path)
  * @param pos
  * @param points
  */
-void localization::HandleLaserScanMessage(const std::string& sensor_id, const cartographer::common::Time time,
+void cartographer_interface::HandleLaserScanMessage(const std::string& sensor_id, const cartographer::common::Time time,
                                           const std::string& frame_id, const cartographer::sensor::TimedPointCloud& ranges)
 {
 //    if (!m_sensor_samplers.at(m_trajectory_id).rangefinder_sampler.Pulse())
@@ -130,7 +143,7 @@ void localization::HandleLaserScanMessage(const std::string& sensor_id, const ca
  * @param time      get message time
  * @param pose      value
  */
-void localization::HandleOdometryMessage(const std::string& sensor_id,
+void cartographer_interface::HandleOdometryMessage(const std::string& sensor_id,
                                          cartographer::common::Time time,
                                          cartographer::transform::Rigid3d pose)
 {
@@ -151,7 +164,7 @@ void localization::HandleOdometryMessage(const std::string& sensor_id,
  * @param acc_w
  * @param gyro_w
  */
-void localization::HandleImuMessage(
+void cartographer_interface::HandleImuMessage(
         const std::string& sensor_id,
         std::unique_ptr<cartographer::sensor::ImuData> &data)
 {
@@ -160,13 +173,13 @@ void localization::HandleImuMessage(
 //        return;
 //    }
     //@TODO if your change IMU position,you should rotate the acc and gyro value
-    m_extrapolators.at(m_trajectory_id).AddImuData(*data);
+    //m_extrapolators.at(m_trajectory_id).AddImuData(*data);
     m_trajectory_builder->AddSensorData(
             sensor_id,
             *data);
 }
 
-void localization::AddExtrapolator(int trajectory_id, const TrajectoryOptions &options)
+void cartographer_interface::AddExtrapolator(int trajectory_id, const TrajectoryOptions &options)
 {
     constexpr double kExtrapolationEstimationTimeSec = 0.001;  // 1 ms
     CHECK(m_extrapolators.count(trajectory_id) == 0);
@@ -183,7 +196,7 @@ void localization::AddExtrapolator(int trajectory_id, const TrajectoryOptions &o
                     gravity_time_constant));
 }
 
-void localization::AddSensorSamplers(int trajectory_id, const TrajectoryOptions &options)
+void cartographer_interface::AddSensorSamplers(int trajectory_id, const TrajectoryOptions &options)
 {
     CHECK(m_sensor_samplers.count(trajectory_id) == 0);
     m_sensor_samplers.emplace(
@@ -194,7 +207,7 @@ void localization::AddSensorSamplers(int trajectory_id, const TrajectoryOptions 
                     options.landmarks_sampling_ratio));
 }
 
-void localization::OnLocalSlamResult(
+void cartographer_interface::OnLocalSlamResult(
         const int trajectory_id, const cartographer::common::Time time,
         const cartographer::transform::Rigid3d local_pose,
         cartographer::sensor::RangeData range_data_in_local,
@@ -287,30 +300,42 @@ const char* GetBasename(const char* filepath) {
     return base ? (base + 1) : filepath;
 }
 
+
+
+// 都是默认使用的构造函数
 ScopedLogSink::ScopedLogSink() : will_die_(false) { AddLogSink(this); }
 ScopedLogSink::~ScopedLogSink() { RemoveLogSink(this); }
 
+/**
+ * @brief 重载该函数实现log日志或直接输出
+ * 
+ * */
 void ScopedLogSink::send(const ::google::LogSeverity severity,
                             const char* const filename,
                             const char* const base_filename, const int line,
                             const struct std::tm* const tm_time,
                             const char* const message,
-                            const size_t message_len) {
+                            const size_t message_len) 
+ {
+     // 获取日志数据 
     const std::string message_string = ::google::LogSink::ToString(
             severity, GetBasename(filename), line, tm_time, message, message_len);
-    switch (severity) {
+    // 根据不同消息等级进行处理
+    switch (severity) 
+    {
+         // 普通输出   
         case ::google::GLOG_INFO:
             std::cout<<message_string<<std::endl;
             break;
-
+        // 警告输出
         case ::google::GLOG_WARNING:
             std::cout<<message_string<<std::endl;
             break;
-
+        // 错误输出
         case ::google::GLOG_ERROR:
             std::cerr<<message_string<<std::endl;
             break;
-
+        // 致命错误输出
         case ::google::GLOG_FATAL:
             std::cerr<<message_string<<std::endl;
             will_die_ = true;
@@ -318,9 +343,12 @@ void ScopedLogSink::send(const ::google::LogSeverity severity,
     }
 }
 
-void ScopedLogSink::WaitTillSent() {
+/**
+ * @brief 线程等待函数
+ * */
+void ScopedLogSink::WaitTillSent() 
+{
     if (will_die_) {
-        // Give ROS some time to actually publish our message.
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 }

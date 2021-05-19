@@ -71,7 +71,11 @@ struct TrajectorySensorSamplers {
     cartographer::common::FixedRatioSampler landmark_sampler;
 };
 
-class localization
+
+/**
+ * @brief cartographer 算法接口 
+ * */
+class cartographer_interface
 {
 public:
     struct LocalSlamData {
@@ -79,13 +83,14 @@ public:
         ::cartographer::transform::Rigid3d local_pose;
         ::cartographer::sensor::RangeData range_data_in_local;
     };
-    ~localization();
-    explicit localization(const std::string& map,
+    // 构造和析构函数
+    ~cartographer_interface();
+    explicit cartographer_interface(const std::string& map,
                           float resolution,
                           const std::string& configuration_directory,
                           const std::string& configuration_basename);
 
-    // read sensor data
+    // 传感器数据处理，目前实现激光数据、里程计数据和IMU数据，其他数据添加方式类似
     void HandleLaserScanMessage(
             const std::string& sensor_id, const cartographer::common::Time time,
             const std::string& frame_id, const cartographer::sensor::TimedPointCloud& ranges);
@@ -94,6 +99,8 @@ public:
                                cartographer::transform::Rigid3d pose);
     void HandleImuMessage(const std::string& sensor_id,
                           std::unique_ptr<cartographer::sensor::ImuData> &data);
+
+                          
     std::unique_ptr<cartographer::mapping::MapBuilderInterface>& get_map_builder(){return m_map_builder;}
     cartographer::transform::Rigid3d tracking_to_map(cartographer::common::Time now);
 private:
@@ -125,11 +132,17 @@ private:
     std::map<int, ::cartographer::mapping::PoseExtrapolator> m_extrapolators;
 };
 
-class ScopedLogSink : public ::google::LogSink {
+
+
+/**
+ * @brief 继承LogSink类，可以打印出cartographer算法运行过程中的log信息，便于调试 
+ */
+class ScopedLogSink : public ::google::LogSink
+{
 public:
     ScopedLogSink();
     ~ScopedLogSink() override;
-
+    // 重载的log函数，对不同类型的log数据进行处理
     void send(::google::LogSeverity severity, const char* filename,
               const char* base_filename, int line, const struct std::tm* tm_time,
               const char* message, size_t message_len) override;
@@ -139,4 +152,5 @@ public:
 private:
     bool will_die_;
 };
+
 #endif //PURE_LOCALIZATION_LOCALIZATION_H

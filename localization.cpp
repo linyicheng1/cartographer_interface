@@ -2,6 +2,7 @@
 
 #include <utility>
 
+
 NodeOptions CreateNodeOptions(
         ::cartographer::common::LuaParameterDictionary* const
         lua_parameter_dictionary);

@@ -1,6 +1,7 @@
-cmake_minimum_required(VERSION 2.8)
+project(map_creator)
 
-project(pure_localization)
+cmake_minimum_required(VERSION 3.10)
+set(CMAKE_CXX_STANDARD 14)
 
 set(PACKAGE_DEPENDENCIES
         eigen_conversions
@@ -10,44 +11,23 @@ set(PACKAGE_DEPENDENCIES
         rviz
 )
 
-find_package(Boost REQUIRED COMPONENTS iostreams)
-find_package(Ceres REQUIRED COMPONENTS SuiteSparse)
-find_package(Eigen3 REQUIRED)
-find_package(Protobuf 3.0.0 REQUIRED)
-
+find_package(cartographer REQUIRED)
 find_package(catkin REQUIRED COMPONENTS ${PACKAGE_DEPENDENCIES})
+find_package(Boost REQUIRED COMPONENTS iostreams)
 
-include_directories(
-        /usr/local/include
-        /usr/include/lua5.2
-        /usr/include/cairo
-        ${EIGEN3_INCLUDE_DIR}
-        ${Boost_INCLUDE_DIRS}
-        ${catkin_INCLUDE_DIRS}
-)
+include("${CARTOGRAPHER_CMAKE_DIR}/functions.cmake")
+option(BUILD_GRPC "build features that require Cartographer gRPC support" false)
+google_initialize_cartographer_project()
 
-add_library(
-        lib_localization
-        localization.cpp
-        ros_msg.cpp
-)
+add_compile_options(-w)
 
-add_executable(
-        pure_localization
-        test.cpp
-)
+file(GLOB MAP_TEST_SRC "*.cpp")
+add_compile_options(-g)
 
-target_link_libraries(
-        pure_localization
-        lib_localization
-        /usr/local/lib/libcartographer.a
-        -lglog
-        -lpthread
-        -lboost_system
-        /usr/lib/x86_64-linux-gnu/liblua5.2.so
-        /usr/lib/x86_64-linux-gnu/libcairo.so
-        ${PROTOBUF_LIBRARY}
-        ${CERES_LIBRARIES}
-        ${Boost_LIBRARIES}
-        ${catkin_LIBRARIES}
-)
+add_executable(map_test ${MAP_TEST_SRC})
+
+target_link_libraries(map_test ${catkin_LIBRARIES} ${PROTOBUF_LIBRARY} ${Boost_LIBRARIES} cartographer)
+add_dependencies(map_test ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS} cartographer)
+get_target_property(INCLUDE_CARTO cartographer INTERFACE_INCLUDE_DIRECTORIES)
+target_include_directories(map_test PUBLIC ${INCLUDE_CARTO} ${catkin_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
+

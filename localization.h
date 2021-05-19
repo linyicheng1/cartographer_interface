@@ -18,6 +18,8 @@
 #include "cartographer/transform/rigid_transform.h"
 #include "cartographer/mapping/pose_extrapolator.h"
 #include "cartographer/common/fixed_ratio_sampler.h"
+#include "cartographer/common/make_unique.h"
+
 
 struct TrajectoryOptions {
     ::cartographer::mapping::proto::TrajectoryBuilderOptions

@@ -260,9 +260,10 @@ void ros_msg::laser_callback(sensor_msgs::MultiEchoLaserScanConstPtr msg)
             if (msg->range_min <= first_echo && first_echo <= msg->range_max)
             {
                 const Eigen::AngleAxisf rotation(angle, Eigen::Vector3f::UnitZ());
-                Eigen::Vector4f point;
-                point << rotation * (first_echo * Eigen::Vector3f::UnitX()),
-                        i * msg->time_increment;
+                cartographer::sensor::TimedRangefinderPoint point;
+                point.position = rotation * (first_echo * Eigen::Vector3f::UnitX());
+                point.time = i * msg->time_increment;
+
                 point_cloud.points.push_back(point);
                 if (!msg->intensities.empty())
                 {
@@ -279,11 +280,11 @@ void ros_msg::laser_callback(sensor_msgs::MultiEchoLaserScanConstPtr msg)
     }
     if (!point_cloud.points.empty())
     {
-        const double duration = point_cloud.points.back()[3];
+        auto duration = point_cloud.points.back().time;
         time += cartographer::common::FromSeconds(duration);
-        for (Eigen::Vector4f &point : point_cloud.points)
+        for (auto &point : point_cloud.points)
         {
-            point[3] -= duration;
+            point.time -= duration;
         }
     }
     HandleLaserScan("echoes",time, msg->header.frame_id,point_cloud);
@@ -354,8 +355,7 @@ void ros_msg::HandleLaserScan(
         const std::string& frame_id,
         const cartographer::sensor::PointCloudWithIntensities& points)
 {
-
-    CHECK_LE(points.points.back()[3], 0);
+    CHECK_LE(points.points.back().time, 0);
     // TODO(gaschler): Use per-point time instead of subdivisions.
     for (int i = 0; i != m_num_subdivisions_per_laser_scan; ++i)
     {
@@ -369,7 +369,7 @@ void ros_msg::HandleLaserScan(
         {
             continue;
         }
-        const double time_to_subdivision_end = subdivision.back()[3];
+        const float time_to_subdivision_end = subdivision.back().time;
         // `subdivision_time` is the end of the measurement so sensor::Collator will
         // send all other sensor data first.
         const cartographer::common::Time subdivision_time =
@@ -385,11 +385,11 @@ void ros_msg::HandleLaserScan(
             continue;
         }
         m_sensor_to_previous_subdivision_time[sensor_id] = subdivision_time;
-        for (Eigen::Vector4f& point : subdivision)
+        for (auto& point : subdivision)
         {
-            point[3] -= time_to_subdivision_end;
+            point.time -= time_to_subdivision_end;
         }
-        CHECK_EQ(subdivision.back()[3], 0);
+        CHECK_EQ(subdivision.back().time, 0);
         m_localization.HandleLaserScanMessage(sensor_id, subdivision_time, frame_id, subdivision);
     }
 }

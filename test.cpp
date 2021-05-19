@@ -14,7 +14,7 @@ int main(int argc, char** argv)
     localization localize("/home/lyc/Downloads/b2-2016-04-05-14-44-52.bag.pbstream",
                           0.05,
                           "/home/lyc/cartographer_ws/src/cartographer_ros/cartographer_ros/configuration_files",
-                          "backpack_2d_localization.lua");
+                          "backpack_2d.lua");
 
     ros::init(argc, argv, "localization");
     ros::start();

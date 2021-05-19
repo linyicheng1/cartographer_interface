@@ -1,25 +1,13 @@
 #include "localization.h"
-
 #include <utility>
-
-
-NodeOptions CreateNodeOptions(
-        ::cartographer::common::LuaParameterDictionary* const
-        lua_parameter_dictionary);
-TrajectoryOptions CreateTrajectoryOptions(
-        ::cartographer::common::LuaParameterDictionary* const
-        lua_parameter_dictionary);
-std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
-        const std::string& configuration_directory,
-        const std::string& configuration_basename);
 
 
 /**
  * @brief  构造函数，设置传感器数据，并添加一条轨迹，加载当前地图 
- * @param map_path                                 需要加载的地图路径
- * @param resolution                                  地图分辨率
- * @param configuration_directory      配置参数目录
- * @param configuration_basename   配置参数文件 
+ * @param map_path                  需要加载的地图路径
+ * @param resolution                地图分辨率
+ * @param configuration_directory   配置参数目录
+ * @param configuration_basename    配置参数文件
  */
 cartographer_interface::cartographer_interface(const std::string& map_path,
                            float resolution,
@@ -31,8 +19,8 @@ m_map_path_str(std::move(map_path)),m_resolution(resolution)
     std::tie(m_node_options, m_trajectory_options) = LoadOptions(configuration_directory,configuration_basename);
     // 调用 cartographer 接口，构造 MapBuilder 类
     m_map_builder = cartographer::common::make_unique<cartographer::mapping::MapBuilder>(m_node_options.map_builder_options);
-    // @TODO 加载现有的地图数据 
-    
+    // 加载现有的地图数据
+    //read_map(map_path);
     //@TODO need to change when change the sensors
     // 目前在本项目中使用一个2d雷达 + IMU + 轮速计
     using SensorId = cartographer::mapping::TrajectoryBuilderInterface::SensorId;
@@ -54,13 +42,18 @@ m_map_path_str(std::move(map_path)),m_resolution(resolution)
                                                               OnLocalSlamResult2(id, time, local_pose,
                                                                                  range_data_in_local);
                                                           });
-    // 
-    AddExtrapolator(m_trajectory_id, m_trajectory_options);
-    AddSensorSamplers(m_trajectory_id, m_trajectory_options);
-    // get trajectory pointer by id
+    // 获取轨迹轨迹生成类指针
     m_trajectory_builder = m_map_builder->GetTrajectoryBuilder(m_trajectory_id);
 }
 
+
+/**
+ * @brief  回调函数
+ * @param id                   轨迹id
+ * @param time                 时间
+ * @param local_pose           局部地图上的位置
+ * @param range_data_in_local  局部地图到全局地图的转换关系
+ */
 void cartographer_interface::OnLocalSlamResult2(
             const int id, const cartographer::common::Time time,
             const cartographer::transform::Rigid3d local_pose,
@@ -68,32 +61,16 @@ void cartographer_interface::OnLocalSlamResult2(
 {
     cartographer::transform::Rigid3d local2global = m_map_builder->pose_graph()->GetLocalToGlobalTransform(m_trajectory_id);
     cartographer::transform::Rigid3d pose3d = local2global * local_pose;
-    std::cout<<"pose:"<<pose3d.translation().x()<<std::endl;
-    //cartographer::Position pose2d = from_carto_rigid3d(from_carto_time(time), pose3d);
-        //callback(pose2d);
-
-        // LOG(INFO) << "Local slam callback at " << from_carto_time(time) << " : " << pose3d.DebugString() << ". with landmark point " << landmark_count;
-        return;
-};
+    std::cout<<"pose: x"<<pose3d.translation().x()<<" y "<<pose3d.translation().y()<<" z "<<pose3d.translation().z()<<std::endl;
+    return;
+}
 
 cartographer_interface::~cartographer_interface()
 {
     delete m_painted_slices;
 }
 
-cartographer::transform::Rigid3d cartographer_interface::tracking_to_map(cartographer::common::Time now)
-{
 
-//    if (m_local_slam_data->time !=
-//        m_extrapolator->GetLastPoseTime())
-//    {
-//        m_extrapolator->AddPose(m_local_slam_data->time,
-//                                m_local_slam_data->local_pose);
-//    }
-    //const cartographer::transform::Rigid3d tracking_to_local = m_extrapolator->ExtrapolatePose(now);
-    auto local_map = m_map_builder->pose_graph()->GetLocalToGlobalTransform(m_trajectory_id);
-    return local_map;// * tracking_to_local;
-}
 /**
  * @brief read map from pbstream file
  * @param map_path
@@ -122,10 +99,6 @@ bool cartographer_interface::read_map(const std::string& map_path)
 void cartographer_interface::HandleLaserScanMessage(const std::string& sensor_id, const cartographer::common::Time time,
                                           const std::string& frame_id, const cartographer::sensor::TimedPointCloud& ranges)
 {
-//    if (!m_sensor_samplers.at(m_trajectory_id).rangefinder_sampler.Pulse())
-//    {
-//        return;
-//    }
     Eigen::Vector3d trans(0.1007,0,0.0558);
     Eigen::Quaterniond rot(1,0,0,0);
     cartographer::transform::Rigid3d sensor_to_tracking(trans, rot);
@@ -138,89 +111,67 @@ void cartographer_interface::HandleLaserScanMessage(const std::string& sensor_id
 }
 
 /**
- * @brief add odometry message
- * @param sensor_id name
- * @param time      get message time
- * @param pose      value
+ * @brief
+ * @param sensor_id
+ * @param time
+ * @param pose
  */
 void cartographer_interface::HandleOdometryMessage(const std::string& sensor_id,
                                          cartographer::common::Time time,
                                          cartographer::transform::Rigid3d pose)
 {
-    if (!m_sensor_samplers.at(m_trajectory_id).odometry_sampler.Pulse())
-    {
-        return;
-    }
-    m_extrapolators.at(m_trajectory_id).AddOdometryData(cartographer::sensor::OdometryData{time, std::move(pose)});
     m_trajectory_builder->AddSensorData(
             sensor_id,
             cartographer::sensor::OdometryData{time, std::move(pose)});
 }
 
 /**
- * @brief handle imu message,we assume there is no angle difference in IMU and laser
+ * @brief
  * @param sensor_id
- * @param time
- * @param acc_w
- * @param gyro_w
+ * @param data
  */
 void cartographer_interface::HandleImuMessage(
         const std::string& sensor_id,
         std::unique_ptr<cartographer::sensor::ImuData> &data)
 {
-//    if (!m_sensor_samplers.at(m_trajectory_id).imu_sampler.Pulse())
-//    {
-//        return;
-//    }
-    //@TODO if your change IMU position,you should rotate the acc and gyro value
-    //m_extrapolators.at(m_trajectory_id).AddImuData(*data);
     m_trajectory_builder->AddSensorData(
             sensor_id,
             *data);
 }
 
-void cartographer_interface::AddExtrapolator(int trajectory_id, const TrajectoryOptions &options)
+/**
+ * @brief  从配置文件中加载参数 
+ * @param configuration_directory  配置文件目录
+ * @param configuration_basename 配置文件名称
+ * @return
+ */
+std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
+        const std::string& configuration_directory,
+        const std::string& configuration_basename)
 {
-    constexpr double kExtrapolationEstimationTimeSec = 0.001;  // 1 ms
-    CHECK(m_extrapolators.count(trajectory_id) == 0);
-    const double gravity_time_constant =
-            m_node_options.map_builder_options.use_trajectory_builder_3d()
-            ? options.trajectory_builder_options.trajectory_builder_3d_options()
-                    .imu_gravity_time_constant()
-            : options.trajectory_builder_options.trajectory_builder_2d_options()
-                    .imu_gravity_time_constant();
-    m_extrapolators.emplace(
-            std::piecewise_construct, std::forward_as_tuple(trajectory_id),
-            std::forward_as_tuple(
-                    ::cartographer::common::FromSeconds(kExtrapolationEstimationTimeSec),
-                    gravity_time_constant));
+    auto file_resolver = cartographer::common::make_unique<
+            cartographer::common::ConfigurationFileResolver>(
+            std::vector<std::string>{configuration_directory});
+
+    const std::string code =
+            file_resolver->GetFileContentOrDie(configuration_basename);
+
+    cartographer::common::LuaParameterDictionary lua_parameter_dictionary(
+            code, std::move(file_resolver));
+
+    return std::make_tuple(CreateNodeOptions(&lua_parameter_dictionary),
+                           CreateTrajectoryOptions(&lua_parameter_dictionary));
 }
 
-void cartographer_interface::AddSensorSamplers(int trajectory_id, const TrajectoryOptions &options)
-{
-    CHECK(m_sensor_samplers.count(trajectory_id) == 0);
-    m_sensor_samplers.emplace(
-            std::piecewise_construct, std::forward_as_tuple(trajectory_id),
-            std::forward_as_tuple(
-                    options.rangefinder_sampling_ratio, options.odometry_sampling_ratio,
-                    options.fixed_frame_pose_sampling_ratio, options.imu_sampling_ratio,
-                    options.landmarks_sampling_ratio));
-}
-
-void cartographer_interface::OnLocalSlamResult(
-        const int trajectory_id, const cartographer::common::Time time,
-        const cartographer::transform::Rigid3d local_pose,
-        cartographer::sensor::RangeData range_data_in_local,
-        const std::unique_ptr<const ::cartographer::mapping::
-        TrajectoryBuilderInterface::InsertionResult>)
-{
-    m_local_slam_data = std::make_shared<LocalSlamData>(LocalSlamData{time, local_pose,
-                                                   std::move(range_data_in_local)});
-}
-
+/**
+ * @brief  加载节点参数 
+ * @param lua_parameter_dictionary
+ * @return 
+ */
 NodeOptions CreateNodeOptions(
         ::cartographer::common::LuaParameterDictionary* const
-        lua_parameter_dictionary) {
+        lua_parameter_dictionary)
+{
     NodeOptions options;
     options.map_builder_options =
             ::cartographer::mapping::CreateMapBuilderOptions(
@@ -237,6 +188,11 @@ NodeOptions CreateNodeOptions(
     return options;
 }
 
+/**
+ * @brief  加载轨迹参数
+ * @param lua_parameter_dictionary
+ * @return
+ */
 TrajectoryOptions CreateTrajectoryOptions(
         ::cartographer::common::LuaParameterDictionary* const
         lua_parameter_dictionary) {
@@ -278,29 +234,13 @@ TrajectoryOptions CreateTrajectoryOptions(
     return options;
 }
 
-std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
-        const std::string& configuration_directory,
-        const std::string& configuration_basename) {
-    auto file_resolver = cartographer::common::make_unique<
-            cartographer::common::ConfigurationFileResolver>(
-            std::vector<std::string>{configuration_directory});
 
-    const std::string code =
-            file_resolver->GetFileContentOrDie(configuration_basename);
 
-    cartographer::common::LuaParameterDictionary lua_parameter_dictionary(
-            code, std::move(file_resolver));
-
-    return std::make_tuple(CreateNodeOptions(&lua_parameter_dictionary),
-                           CreateTrajectoryOptions(&lua_parameter_dictionary));
-}
-
-const char* GetBasename(const char* filepath) {
+const char* GetBasename(const char* filepath)
+{
     const char* base = std::strrchr(filepath, '/');
     return base ? (base + 1) : filepath;
 }
-
-
 
 // 都是默认使用的构造函数
 ScopedLogSink::ScopedLogSink() : will_die_(false) { AddLogSink(this); }

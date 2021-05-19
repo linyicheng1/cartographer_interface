@@ -20,7 +20,7 @@
 #include "cartographer/common/fixed_ratio_sampler.h"
 #include "cartographer/common/make_unique.h"
 
-
+// 轨迹参数结构体
 struct TrajectoryOptions {
     ::cartographer::mapping::proto::TrajectoryBuilderOptions
             trajectory_builder_options;
@@ -43,6 +43,7 @@ struct TrajectoryOptions {
     double landmarks_sampling_ratio;
 };
 
+// 节点参数结构体
 struct NodeOptions {
     ::cartographer::mapping::proto::MapBuilderOptions map_builder_options;
     std::string map_frame;
@@ -52,25 +53,18 @@ struct NodeOptions {
     double trajectory_publish_period_sec;
 };
 
-struct TrajectorySensorSamplers {
-    TrajectorySensorSamplers(const double rangefinder_sampling_ratio,
-                             const double odometry_sampling_ratio,
-                             const double fixed_frame_pose_sampling_ratio,
-                             const double imu_sampling_ratio,
-                             const double landmark_sampling_ratio)
-            : rangefinder_sampler(rangefinder_sampling_ratio),
-              odometry_sampler(odometry_sampling_ratio),
-              fixed_frame_pose_sampler(fixed_frame_pose_sampling_ratio),
-              imu_sampler(imu_sampling_ratio),
-              landmark_sampler(landmark_sampling_ratio) {}
 
-    cartographer::common::FixedRatioSampler rangefinder_sampler;
-    cartographer::common::FixedRatioSampler odometry_sampler;
-    cartographer::common::FixedRatioSampler fixed_frame_pose_sampler;
-    cartographer::common::FixedRatioSampler imu_sampler;
-    cartographer::common::FixedRatioSampler landmark_sampler;
-};
 
+
+NodeOptions CreateNodeOptions(
+        ::cartographer::common::LuaParameterDictionary* const
+        lua_parameter_dictionary);
+TrajectoryOptions CreateTrajectoryOptions(
+        ::cartographer::common::LuaParameterDictionary* const
+        lua_parameter_dictionary);
+std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
+        const std::string& configuration_directory,
+        const std::string& configuration_basename);
 
 /**
  * @brief cartographer 算法接口 
@@ -105,15 +99,7 @@ public:
     cartographer::transform::Rigid3d tracking_to_map(cartographer::common::Time now);
 private:
     bool read_map(const std::string& map_path);// read map from file
-    void OnLocalSlamResult(
-            const int trajectory_id, const cartographer::common::Time time,
-            const cartographer::transform::Rigid3d local_pose,
-            cartographer::sensor::RangeData range_data_in_local,
-            const std::unique_ptr<const ::cartographer::mapping::
-            TrajectoryBuilderInterface::InsertionResult>
-            insertion_result);
-    void AddExtrapolator(int trajectory_id, const TrajectoryOptions& options);
-    void AddSensorSamplers(int trajectory_id, const TrajectoryOptions& options);
+
     void OnLocalSlamResult2(
             const int trajectory_id, const cartographer::common::Time time,
             const cartographer::transform::Rigid3d local_pose,
@@ -127,9 +113,6 @@ private:
     std::unique_ptr<cartographer::mapping::MapBuilderInterface> m_map_builder;
     NodeOptions m_node_options;
     TrajectoryOptions m_trajectory_options;
-    std::shared_ptr<const LocalSlamData> m_local_slam_data;
-    std::unordered_map<int, TrajectorySensorSamplers> m_sensor_samplers;
-    std::map<int, ::cartographer::mapping::PoseExtrapolator> m_extrapolators;
 };
 
 

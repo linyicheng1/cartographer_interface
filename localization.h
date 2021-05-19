@@ -53,9 +53,6 @@ struct NodeOptions {
     double trajectory_publish_period_sec;
 };
 
-
-
-
 NodeOptions CreateNodeOptions(
         ::cartographer::common::LuaParameterDictionary* const
         lua_parameter_dictionary);
@@ -72,11 +69,6 @@ std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
 class cartographer_interface
 {
 public:
-    struct LocalSlamData {
-        ::cartographer::common::Time time;
-        ::cartographer::transform::Rigid3d local_pose;
-        ::cartographer::sensor::RangeData range_data_in_local;
-    };
     // 构造和析构函数
     ~cartographer_interface();
     explicit cartographer_interface(const std::string& map,
@@ -104,8 +96,7 @@ private:
             const int trajectory_id, const cartographer::common::Time time,
             const cartographer::transform::Rigid3d local_pose,
             cartographer::sensor::RangeData range_data_in_local);
-    float m_resolution;
-    std::string m_map_path_str;// map path
+
     cartographer::io::PaintSubmapSlicesResult *m_painted_slices;
     int m_trajectory_id;
     std::set<cartographer::mapping::TrajectoryBuilderInterface::SensorId> m_sensor_ids;

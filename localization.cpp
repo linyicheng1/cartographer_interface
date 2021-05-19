@@ -12,8 +12,7 @@
 cartographer_interface::cartographer_interface(const std::string& map_path,
                            float resolution,
                            const std::string& configuration_directory,
-                           const std::string& configuration_basename):
-m_map_path_str(std::move(map_path)),m_resolution(resolution)
+                           const std::string& configuration_basename)
 {
     // 从配置文件中加载配置参数
     std::tie(m_node_options, m_trajectory_options) = LoadOptions(configuration_directory,configuration_basename);
@@ -61,7 +60,7 @@ void cartographer_interface::OnLocalSlamResult2(
 {
     cartographer::transform::Rigid3d local2global = m_map_builder->pose_graph()->GetLocalToGlobalTransform(m_trajectory_id);
     cartographer::transform::Rigid3d pose3d = local2global * local_pose;
-    std::cout<<"pose: x"<<pose3d.translation().x()<<" y "<<pose3d.translation().y()<<" z "<<pose3d.translation().z()<<std::endl;
+    std::cout<<"pose: x"<<pose3d.translation().x()<<" y "<<pose3d.translation().y()<<" angle "<<pose3d.rotation().z()<<std::endl;
     return;
 }
 

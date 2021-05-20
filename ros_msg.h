@@ -12,16 +12,17 @@
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/MultiEchoLaserScan.h>
 #include <nav_msgs/Odometry.h>
-#include "localization.h"
+#include "cartographer_interface.h"
 
 class ros_msg
 {
 public:
     explicit ros_msg(cartographer_interface &lo,float resolution);
-
+    // 获取可视化数据 
     std::unique_ptr<nav_msgs::OccupancyGrid>  DrawAndPublish();
     visualization_msgs::MarkerArray GetTrajectoryNodeList();
-    std::vector<geometry_msgs::TransformStamped> TrajectoryStates(std::unique_ptr<cartographer::mapping::MapBuilderInterface> &map_builder);
+
+    // 传感器数据处理函数
     void laser_callback(sensor_msgs::MultiEchoLaserScanConstPtr msg);
     void imu_callback(const sensor_msgs::Imu::ConstPtr &msg);
     void odometry_callback(const nav_msgs::Odometry &msg);

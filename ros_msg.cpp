@@ -8,13 +8,235 @@ void PushAndResetLineMarker(visualization_msgs::Marker* marker,
                             std::vector<visualization_msgs::Marker>* markers);
 geometry_msgs::Point ToGeometryMsgPoint(const Eigen::Vector3d& vector3d);
 
+
+/**
+ * @brief  构造函数，拿到接口类指针，并指定地图精度
+ * @param lo  接口类指针
+ * @param resolution  地图分辨率
+ */
 ros_msg::ros_msg(cartographer_interface &lo,float resolution):
     m_resolution(resolution),m_map_builder(lo.get_map_builder()),m_localization(lo)
 {
 }
 
+/**
+ * @brief  激光雷达数据回调函数，对激光数据进行了时间分配
+ * @param msg 激光雷达数据 
+ */
+void ros_msg::laser_callback(sensor_msgs::MultiEchoLaserScanConstPtr msg)
+{
+    // 构造点云数据 
+    cartographer::sensor::PointCloudWithIntensities point_cloud;
+    // 计算当前时间,公式和FromRos函数一致
+    cartographer::common::Time time = cartographer::common::FromUniversal(
+            (msg->header.stamp.sec +
+             ::cartographer::common::kUtsEpochOffsetFromUnixEpochInSeconds) *
+            10000000ll +
+            (msg->header.stamp.nsec + 50) / 100);
+    // 当前帧最小的角度 
+    float angle = msg->angle_min;
+    // 遍历所有激光数据 
+    for (size_t i = 0; i < msg->ranges.size(); ++i)
+    {
+        // 获取一个激光数据 
+        const auto& echoes = msg->ranges[i];
+        if (!echoes.echoes.empty())
+        {// 确保非空
+            const float first_echo = echoes.echoes[0];// 当前激光的距离
+            if (msg->range_min <= first_echo && first_echo <= msg->range_max)
+            {// 确保激光数据在范围内 
+                // 绕z轴旋转角度 angle
+                const Eigen::AngleAxisf rotation(angle, Eigen::Vector3f::UnitZ());
+                // cartographer 接口的激光数据 
+                cartographer::sensor::TimedRangefinderPoint point;
+                // 计算当前点的位置
+                point.position = rotation * (first_echo * Eigen::Vector3f::UnitX());
+                // 计算当前点的时间 ，注意该时间是在当前帧内的时间
+                point.time = i * msg->time_increment;
+                // 压入到点云数据
+                point_cloud.points.push_back(point);
+                // 如果激光数据有光强参数
+                if (!msg->intensities.empty())
+                {
+                    // 压入光强数据
+                    auto echo_intensities = msg->intensities[i];
+                    point_cloud.intensities.push_back(echo_intensities.echoes[0]);
+                }
+                else
+                {
+                    point_cloud.intensities.push_back(0.f);
+                }
+            }
+        }
+        // 更新当前激光角度 
+        angle += msg->angle_increment;
+    }
+    // 确保当前获取的点云数据非空
+    if (!point_cloud.points.empty())
+    {
+        // 获取最后一个点云的时间，即当前帧总共花费的时间
+        auto duration = point_cloud.points.back().time;
+        // 当前系统时间  + 当前帧花费的时间 ，得到真正的时间信息 
+        time += cartographer::common::FromSeconds(duration);
+        // 整体时间前移，认为最后一束激光为当前时间，其他激光都是稍早之前的数据
+        for (auto &point : point_cloud.points)
+        {
+            point.time -= duration;
+        }
+    }
+    // 调用 HandleLaserScan 处理激光雷达数据
+    HandleLaserScan("echoes",time, msg->header.frame_id,point_cloud);
+}
+
+/**
+ * @brief IMU  数据回调函数
+ * @param msg IMU 数据 
+ */
+void ros_msg::imu_callback(const sensor_msgs::Imu::ConstPtr &msg)
+{
+    // ROS 格式数据转换到 cartographer 接口数据 
+    std::unique_ptr<cartographer::sensor::ImuData> imu_data = ToImuData(msg);
+    // 数据不为空，则调用接口将数据输入到算法中
+    if (imu_data != nullptr)
+    {
+        m_localization.HandleImuMessage("imu",imu_data);
+    }
+}
+
+/**
+ * @brief 轮速计数据回调函数
+ * @param msg 轮速计数据
+ */
+void ros_msg::odometry_callback(const nav_msgs::Odometry &msg)
+{
+    //localize.HandleOdometryMessage();
+}
+
+/**
+ * @brief  处理激光雷达数据，将一帧激光雷达数据拆分成10份分别进行处理 
+ * @param sensor_id  传感器id 
+ * @param time  传感器时间
+ * @param frame_id 帧id
+ * @param points 点云数据 
+ */
+void ros_msg::HandleLaserScan(
+        const std::string& sensor_id, const cartographer::common::Time time,
+        const std::string& frame_id,
+        const cartographer::sensor::PointCloudWithIntensities& points)
+{
+    // 检查点云时间
+    CHECK_LE(points.points.back().time, 0);
+    // 将一帧激光数据分为10次输入
+    for (int i = 0; i != m_num_subdivisions_per_laser_scan; ++i)
+    {
+        // 起始id
+        const size_t start_index =
+                points.points.size() * i / m_num_subdivisions_per_laser_scan;
+        // 结束id 
+        const size_t end_index =
+                points.points.size() * (i + 1) / m_num_subdivisions_per_laser_scan;
+        // 构造  subdivision       
+        cartographer::sensor::TimedPointCloud subdivision(
+                points.points.begin() + start_index, points.points.begin() + end_index);
+        if (start_index == end_index)
+        {
+            continue;
+        }
+        // subdivision 的时间 
+        const float time_to_subdivision_end = subdivision.back().time;
+        // `subdivision_time` is the end of the measurement so sensor::Collator will
+        // send all other sensor data first.
+        // 重新分配时间
+        const cartographer::common::Time subdivision_time =
+                time + cartographer::common::FromSeconds(time_to_subdivision_end);
+        auto it = m_sensor_to_previous_subdivision_time.find(sensor_id);
+        if (it != m_sensor_to_previous_subdivision_time.end() &&
+            it->second >= subdivision_time)
+        {
+            LOG(WARNING) << "Ignored subdivision of a LaserScan message from sensor "
+                         << sensor_id << " because previous subdivision time "
+                         << it->second << " is not before current subdivision time "
+                         << subdivision_time;
+            continue;
+        }
+        m_sensor_to_previous_subdivision_time[sensor_id] = subdivision_time;
+        for (auto& point : subdivision)
+        {
+            point.time -= time_to_subdivision_end;
+        }
+        // 调用接口对数据进行处理
+        CHECK_EQ(subdivision.back().time, 0);
+        m_localization.HandleLaserScanMessage(sensor_id, subdivision_time, frame_id, subdivision);
+    }
+}
+
+/**
+ * @brief  将ROS格式IMU 数据转换到 cartographer 格式的数据 
+ * @param msg IMU 数据
+ * @return cartographer格式数据 
+ */
+std::unique_ptr<cartographer::sensor::ImuData> ros_msg::ToImuData(
+        const sensor_msgs::Imu::ConstPtr& msg) 
+{
+    // 检查协方差参数 
+    CHECK_NE(msg->linear_acceleration_covariance[0], -1)
+        << "Your IMU data claims to not contain linear acceleration measurements "
+           "by setting linear_acceleration_covariance[0] to -1. Cartographer "
+           "requires this data to work. See "
+           "http://docs.ros.org/api/sensor_msgs/html/msg/Imu.html.";
+    CHECK_NE(msg->angular_velocity_covariance[0], -1)
+        << "Your IMU data claims to not contain angular velocity measurements "
+           "by setting angular_velocity_covariance[0] to -1. Cartographer "
+           "requires this data to work. See "
+           "http://docs.ros.org/api/sensor_msgs/html/msg/Imu.html.";
+    // 获取当前时间 
+    const cartographer::common::Time time = FromRos(msg->header.stamp);
+    // 构造  cartographer格式数据  
+    return cartographer::common::make_unique<cartographer::sensor::ImuData>(
+            cartographer::sensor::ImuData{
+                    time,
+                    ToEigen(msg->linear_acceleration),
+                    ToEigen(msg->angular_velocity)});
+}
+
+/**
+ * @brief  ROS 格式的时间数据转换到cartotographer格式时间
+ * @param time ROS 格式时间 
+ * @return  cartotographer格式时间
+ */
+cartographer::common::Time ros_msg::FromRos(const ::ros::Time& time)
+{
+    // The epoch of the ICU Universal Time Scale is "0001-01-01 00:00:00.0 +0000",
+    // exactly 719162 days before the Unix epoch.
+    return ::cartographer::common::FromUniversal(
+            (time.sec +
+             ::cartographer::common::kUtsEpochOffsetFromUnixEpochInSeconds) *
+            10000000ll +
+            (time.nsec + 50) / 100);  // + 50 to get the rounding correct.
+}
+
+/**
+ * @brief  可视化地图数据 
+ * @return 返回栅格地图数据 
+ */
+std::unique_ptr<nav_msgs::OccupancyGrid>  ros_msg::DrawAndPublish()
+{
+    // 获取所有子地图
+    set_submaps();
+    // 绘制地图
+    auto painted_slices = PaintSubmapSlices(m_submap_slices, m_resolution);
+    // 绘制地图转换为栅格地图格式
+    return CreateOccupancyGridMsg(
+            painted_slices, m_resolution, m_last_frame_id, m_last_timestamp);
+}
+
+/**
+ * @brief    获取轨迹数据
+ * @return   可视化轨迹数据 
+ */
 visualization_msgs::MarkerArray ros_msg::GetTrajectoryNodeList()
 {
+    // 轨迹数据 
     visualization_msgs::MarkerArray trajectory_node_list;
     const auto node_poses = m_map_builder->pose_graph()->GetTrajectoryNodePoses();
     // Find the last node indices for each trajectory that have either
@@ -47,7 +269,8 @@ visualization_msgs::MarkerArray ros_msg::GetTrajectoryNodeList()
         }
     }
 
-    for (const int trajectory_id : node_poses.trajectory_ids()) {
+    for (const int trajectory_id : node_poses.trajectory_ids()) 
+    {
         visualization_msgs::Marker marker =
                 CreateTrajectoryMarker(trajectory_id, "map");
         int last_inter_submap_constrained_node = std::max(
@@ -113,12 +336,18 @@ visualization_msgs::MarkerArray ros_msg::GetTrajectoryNodeList()
     return trajectory_node_list;
 }
 
-std::unique_ptr<nav_msgs::OccupancyGrid>  ros_msg::DrawAndPublish()
+
+ros::Time ros_msg::ToRos(::cartographer::common::Time time)
 {
-    set_submaps();
-    auto painted_slices = PaintSubmapSlices(m_submap_slices, m_resolution);
-    return CreateOccupancyGridMsg(
-            painted_slices, m_resolution, m_last_frame_id, m_last_timestamp);
+    int64_t uts_timestamp = ::cartographer::common::ToUniversal(time);
+    int64_t ns_since_unix_epoch =
+            (uts_timestamp -
+             ::cartographer::common::kUtsEpochOffsetFromUnixEpochInSeconds *
+             10000000ll) *
+            100ll;
+    ::ros::Time ros_time;
+    ros_time.fromNSec(ns_since_unix_epoch);
+    return ros_time;
 }
 
 std::unique_ptr<nav_msgs::OccupancyGrid>
@@ -221,178 +450,6 @@ void ros_msg::set_submaps()
     m_last_timestamp = ros::Time::now();
 }
 
-std::vector<geometry_msgs::TransformStamped>
-ros_msg::TrajectoryStates(std::unique_ptr<cartographer::mapping::MapBuilderInterface> &map_builder)
-{
-    std::vector<geometry_msgs::TransformStamped> tfs;
-    geometry_msgs::TransformStamped stamped_transform;
-    stamped_transform.header.stamp = ros::Time::now();
-    stamped_transform.header.frame_id = "submaps";
-    stamped_transform.child_frame_id = "map";
-    geometry_msgs::Transform tf;
-    tf.rotation.x = 10;
-    tf.rotation.y = 10;
-    tf.rotation.z = 0;
-    tf.rotation.x = 0;
-    tf.rotation.y = 0;
-    tf.rotation.z = 0;
-    tf.rotation.w = 1;
-    stamped_transform.transform = tf;
-    tfs.emplace_back(stamped_transform);
-    return tfs;
-}
-
-void ros_msg::laser_callback(sensor_msgs::MultiEchoLaserScanConstPtr msg)
-{
-    cartographer::sensor::PointCloudWithIntensities point_cloud;
-    cartographer::common::Time time = cartographer::common::FromUniversal(
-            (msg->header.stamp.sec +
-             ::cartographer::common::kUtsEpochOffsetFromUnixEpochInSeconds) *
-            10000000ll +
-            (msg->header.stamp.nsec + 50) / 100);
-    float angle = msg->angle_min;
-    for (size_t i = 0; i < msg->ranges.size(); ++i)
-    {
-        const auto& echoes = msg->ranges[i];
-        if (!echoes.echoes.empty())
-        {
-            const float first_echo = echoes.echoes[0];
-            if (msg->range_min <= first_echo && first_echo <= msg->range_max)
-            {
-                const Eigen::AngleAxisf rotation(angle, Eigen::Vector3f::UnitZ());
-                cartographer::sensor::TimedRangefinderPoint point;
-                point.position = rotation * (first_echo * Eigen::Vector3f::UnitX());
-                point.time = i * msg->time_increment;
-
-                point_cloud.points.push_back(point);
-                if (!msg->intensities.empty())
-                {
-                    const auto& echo_intensities = msg->intensities[i];
-                    point_cloud.intensities.push_back(echoes.echoes[0]);
-                }
-                else
-                {
-                    point_cloud.intensities.push_back(0.f);
-                }
-            }
-        }
-        angle += msg->angle_increment;
-    }
-    if (!point_cloud.points.empty())
-    {
-        auto duration = point_cloud.points.back().time;
-        time += cartographer::common::FromSeconds(duration);
-        for (auto &point : point_cloud.points)
-        {
-            point.time -= duration;
-        }
-    }
-    HandleLaserScan("echoes",time, msg->header.frame_id,point_cloud);
-}
-
-void ros_msg::imu_callback(const sensor_msgs::Imu::ConstPtr &msg)
-{
-    std::unique_ptr<cartographer::sensor::ImuData> imu_data = ToImuData(msg);
-
-    if (imu_data != nullptr)
-    {
-        m_localization.HandleImuMessage("imu",imu_data);
-    }
-}
-
-void ros_msg::odometry_callback(const nav_msgs::Odometry &msg)
-{
-    //localize.HandleOdometryMessage();
-}
-
-std::unique_ptr<cartographer::sensor::ImuData> ros_msg::ToImuData(
-        const sensor_msgs::Imu::ConstPtr& msg) {
-    CHECK_NE(msg->linear_acceleration_covariance[0], -1)
-        << "Your IMU data claims to not contain linear acceleration measurements "
-           "by setting linear_acceleration_covariance[0] to -1. Cartographer "
-           "requires this data to work. See "
-           "http://docs.ros.org/api/sensor_msgs/html/msg/Imu.html.";
-    CHECK_NE(msg->angular_velocity_covariance[0], -1)
-        << "Your IMU data claims to not contain angular velocity measurements "
-           "by setting angular_velocity_covariance[0] to -1. Cartographer "
-           "requires this data to work. See "
-           "http://docs.ros.org/api/sensor_msgs/html/msg/Imu.html.";
-
-    const cartographer::common::Time time = FromRos(msg->header.stamp);
-    return cartographer::common::make_unique<cartographer::sensor::ImuData>(
-            cartographer::sensor::ImuData{
-                    time,
-                    ToEigen(msg->linear_acceleration),
-                    ToEigen(msg->angular_velocity)});
-}
-
-cartographer::common::Time ros_msg::FromRos(const ::ros::Time& time)
-{
-    // The epoch of the ICU Universal Time Scale is "0001-01-01 00:00:00.0 +0000",
-    // exactly 719162 days before the Unix epoch.
-    return ::cartographer::common::FromUniversal(
-            (time.sec +
-             ::cartographer::common::kUtsEpochOffsetFromUnixEpochInSeconds) *
-            10000000ll +
-            (time.nsec + 50) / 100);  // + 50 to get the rounding correct.
-}
-
-ros::Time ros_msg::ToRos(::cartographer::common::Time time)
-{
-    int64_t uts_timestamp = ::cartographer::common::ToUniversal(time);
-    int64_t ns_since_unix_epoch =
-            (uts_timestamp -
-             ::cartographer::common::kUtsEpochOffsetFromUnixEpochInSeconds *
-             10000000ll) *
-            100ll;
-    ::ros::Time ros_time;
-    ros_time.fromNSec(ns_since_unix_epoch);
-    return ros_time;
-}
-
-void ros_msg::HandleLaserScan(
-        const std::string& sensor_id, const cartographer::common::Time time,
-        const std::string& frame_id,
-        const cartographer::sensor::PointCloudWithIntensities& points)
-{
-    CHECK_LE(points.points.back().time, 0);
-    // TODO(gaschler): Use per-point time instead of subdivisions.
-    for (int i = 0; i != m_num_subdivisions_per_laser_scan; ++i)
-    {
-        const size_t start_index =
-                points.points.size() * i / m_num_subdivisions_per_laser_scan;
-        const size_t end_index =
-                points.points.size() * (i + 1) / m_num_subdivisions_per_laser_scan;
-        cartographer::sensor::TimedPointCloud subdivision(
-                points.points.begin() + start_index, points.points.begin() + end_index);
-        if (start_index == end_index)
-        {
-            continue;
-        }
-        const float time_to_subdivision_end = subdivision.back().time;
-        // `subdivision_time` is the end of the measurement so sensor::Collator will
-        // send all other sensor data first.
-        const cartographer::common::Time subdivision_time =
-                time + cartographer::common::FromSeconds(time_to_subdivision_end);
-        auto it = m_sensor_to_previous_subdivision_time.find(sensor_id);
-        if (it != m_sensor_to_previous_subdivision_time.end() &&
-            it->second >= subdivision_time)
-        {
-            LOG(WARNING) << "Ignored subdivision of a LaserScan message from sensor "
-                         << sensor_id << " because previous subdivision time "
-                         << it->second << " is not before current subdivision time "
-                         << subdivision_time;
-            continue;
-        }
-        m_sensor_to_previous_subdivision_time[sensor_id] = subdivision_time;
-        for (auto& point : subdivision)
-        {
-            point.time -= time_to_subdivision_end;
-        }
-        CHECK_EQ(subdivision.back().time, 0);
-        m_localization.HandleLaserScanMessage(sensor_id, subdivision_time, frame_id, subdivision);
-    }
-}
 
 ::std_msgs::ColorRGBA ToMessage(const cartographer::io::FloatColor& color) {
     ::std_msgs::ColorRGBA result;

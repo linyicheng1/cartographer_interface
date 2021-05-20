@@ -71,5 +71,17 @@ cartographer 算法接口的极度简化接口实现，能自行修改选择是�
 
 ## cartographer 库接口调用逻辑
 
+### 新建一条轨迹
+* 从配置文件中加载配置参数
+`LoadOptions`
+* 构造MapBuilder类`m_map_builder = cartographer::common::make_unique<cartographer::mapping::MapBuilder>(m_node_options.map_builder_options);`
+* 根据项目传感器需要构造 SensorId 数据
+* 定义回调函数，在下一步使用，回调函数内可以获得当前定位信息`OnLocalSlamResult2`
+* 构造轨迹生成类 `m_map_builder->AddTrajectoryBuilder`
+* 获取 轨迹生成类 指针
 
+### 添加传感器数据 
+
+* IMU 轮速计等数据直接转换成cartographer数据格式即可
+* 雷达数据处理较为复杂，可选将一帧数据分成多份进行处理（猜测这种操作会使得计算速度更快，精度更高,但是全局定位变差，需要有较好初始位置）
 

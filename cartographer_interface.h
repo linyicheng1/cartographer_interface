@@ -53,15 +53,8 @@ struct NodeOptions {
     double trajectory_publish_period_sec;
 };
 
-NodeOptions CreateNodeOptions(
-        ::cartographer::common::LuaParameterDictionary* const
-        lua_parameter_dictionary);
-TrajectoryOptions CreateTrajectoryOptions(
-        ::cartographer::common::LuaParameterDictionary* const
-        lua_parameter_dictionary);
-std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
-        const std::string& configuration_directory,
-        const std::string& configuration_basename);
+
+
 
 /**
  * @brief cartographer 算法接口 
@@ -70,34 +63,44 @@ class cartographer_interface
 {
 public:
     // 构造和析构函数
-    ~cartographer_interface();
     explicit cartographer_interface(const std::string& map,
-                          float resolution,
                           const std::string& configuration_directory,
                           const std::string& configuration_basename);
-
-    // 传感器数据处理，目前实现激光数据、里程计数据和IMU数据，其他数据添加方式类似
-    void HandleLaserScanMessage(
-            const std::string& sensor_id, const cartographer::common::Time time,
-            const std::string& frame_id, const cartographer::sensor::TimedPointCloud& ranges);
+    ~cartographer_interface();
+    // 处理2D激光雷达数据
+    void Handle2DLaserScanMessage(const std::string& sensor_id,
+                                  cartographer::common::Time time,
+                                  const std::string& frame_id,
+                                  const cartographer::sensor::TimedPointCloud& ranges);
+    // @TODO 处理3D激光雷达数据
+    void Handle3DLaserScanMessage(){}
+    // 处理里程计信息
     void HandleOdometryMessage(const std::string& sensor_id,
                                cartographer::common::Time time,
                                cartographer::transform::Rigid3d pose);
+    // 处理IMU数据
     void HandleImuMessage(const std::string& sensor_id,
                           std::unique_ptr<cartographer::sensor::ImuData> &data);
-
-                          
     std::unique_ptr<cartographer::mapping::MapBuilderInterface>& get_map_builder(){return m_map_builder;}
-    cartographer::transform::Rigid3d tracking_to_map(cartographer::common::Time now);
+
 private:
     bool read_map(const std::string& map_path);// read map from file
-
+    // 加载配置参数
+    static std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
+            const std::string& configuration_directory,
+            const std::string& configuration_basename);
+    static NodeOptions CreateNodeOptions(
+            ::cartographer::common::LuaParameterDictionary* lua_parameter_dictionary);
+    static TrajectoryOptions CreateTrajectoryOptions(
+            ::cartographer::common::LuaParameterDictionary* lua_parameter_dictionary);
     void OnLocalSlamResult2(
-            const int trajectory_id, const cartographer::common::Time time,
-            const cartographer::transform::Rigid3d local_pose,
-            cartographer::sensor::RangeData range_data_in_local);
-
-    cartographer::io::PaintSubmapSlicesResult *m_painted_slices;
+            int trajectory_id, cartographer::common::Time time,
+            const cartographer::transform::Rigid3d& local_pose,
+            const cartographer::sensor::RangeData& range_data_in_local);
+    // 激光雷达和车体中心的转换关系
+    Eigen::Vector3d m_trans;
+    Eigen::Quaterniond m_rot;
+    cartographer::io::PaintSubmapSlicesResult *m_painted_slices{};
     int m_trajectory_id;
     std::set<cartographer::mapping::TrajectoryBuilderInterface::SensorId> m_sensor_ids;
     cartographer::mapping::TrajectoryBuilderInterface*  m_trajectory_builder;
@@ -125,6 +128,7 @@ public:
 
 private:
     bool will_die_;
+    static const char* GetBasename(const char* filepath);
 };
 
 #endif //PURE_LOCALIZATION_LOCALIZATION_H

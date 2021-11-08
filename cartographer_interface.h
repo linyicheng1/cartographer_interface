@@ -84,6 +84,10 @@ public:
     std::unique_ptr<cartographer::mapping::MapBuilderInterface>& get_map_builder(){return m_map_builder;}
 
 private:
+    void add2DLaserScanMessage(const std::string& sensor_id,
+                                  cartographer::common::Time time,
+                                  const std::string& frame_id,
+                                  const cartographer::sensor::TimedPointCloud& ranges);
     bool read_map(const std::string& map_path);// read map from file
     // 加载配置参数
     static std::tuple<NodeOptions, TrajectoryOptions> LoadOptions(
@@ -100,6 +104,7 @@ private:
     // 激光雷达和车体中心的转换关系
     Eigen::Vector3d m_trans;
     Eigen::Quaterniond m_rot;
+    std::map<std::string, cartographer::common::Time> m_sensor_to_previous_subdivision_time;
     cartographer::io::PaintSubmapSlicesResult *m_painted_slices{};
     int m_trajectory_id;
     std::set<cartographer::mapping::TrajectoryBuilderInterface::SensorId> m_sensor_ids;

@@ -32,10 +32,6 @@ private:
             const cartographer::io::PaintSubmapSlicesResult& painted_slices,
             double resolution, const std::string& frame_id,
             const ros::Time& time);
-    void HandleLaserScan(
-            const std::string& sensor_id, const cartographer::common::Time time,
-            const std::string& frame_id,
-            const cartographer::sensor::PointCloudWithIntensities& points);
     void set_submaps();
     std::unique_ptr<cartographer::sensor::ImuData> ToImuData(
             const sensor_msgs::Imu::ConstPtr& msg);

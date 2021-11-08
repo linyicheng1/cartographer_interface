@@ -112,63 +112,6 @@ void sensor_ros::odometry_callback(const nav_msgs::Odometry &msg)
     //localize.HandleOdometryMessage();
 }
 
-/**
- * @brief  处理激光雷达数据，将一帧激光雷达数据拆分成10份分别进行处理
- * @param sensor_id  传感器id
- * @param time  传感器时间
- * @param frame_id 帧id
- * @param points 点云数据
- */
-void sensor_ros::HandleLaserScan(
-        const std::string& sensor_id, const cartographer::common::Time time,
-        const std::string& frame_id,
-        const cartographer::sensor::PointCloudWithIntensities& points)
-{
-    // 检查点云时间
-    CHECK_LE(points.points.back().time, 0);
-    // 将一帧激光数据分为10次输入
-    for (int i = 0; i != m_num_subdivisions_per_laser_scan; ++i)
-    {
-        // 起始id
-        const size_t start_index =
-                points.points.size() * i / m_num_subdivisions_per_laser_scan;
-        // 结束id
-        const size_t end_index =
-                points.points.size() * (i + 1) / m_num_subdivisions_per_laser_scan;
-        // 构造  subdivision
-        cartographer::sensor::TimedPointCloud subdivision(
-                points.points.begin() + start_index, points.points.begin() + end_index);
-        if (start_index == end_index)
-        {
-            continue;
-        }
-        // subdivision 的时间
-        const float time_to_subdivision_end = subdivision.back().time;
-        // `subdivision_time` is the end of the measurement so sensor::Collator will
-        // send all other sensor data first.
-        // 重新分配时间
-        const cartographer::common::Time subdivision_time =
-                time + cartographer::common::FromSeconds(time_to_subdivision_end);
-        auto it = m_sensor_to_previous_subdivision_time.find(sensor_id);
-        if (it != m_sensor_to_previous_subdivision_time.end() &&
-            it->second >= subdivision_time)
-        {
-            LOG(WARNING) << "Ignored subdivision of a LaserScan message from sensor "
-                         << sensor_id << " because previous subdivision time "
-                         << it->second << " is not before current subdivision time "
-                         << subdivision_time;
-            continue;
-        }
-        m_sensor_to_previous_subdivision_time[sensor_id] = subdivision_time;
-        for (auto& point : subdivision)
-        {
-            point.time -= time_to_subdivision_end;
-        }
-        // 调用接口对数据进行处理
-        CHECK_EQ(subdivision.back().time, 0);
-        m_localization.Handle2DLaserScanMessage(sensor_id, subdivision_time, frame_id, subdivision);
-    }
-}
 
 /**
  * @brief  将ROS格式IMU 数据转换到 cartographer 格式的数据
